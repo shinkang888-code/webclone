@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { FeatureGuide } from "@/components/clone/feature-guide";
 import { HistoryPanel } from "@/components/clone/history-panel";
@@ -148,14 +149,23 @@ export function CloneDashboard() {
   return (
     <div className="scan-body min-h-screen">
       <div className="mx-auto w-full max-w-6xl px-4 py-8 md:px-6 md:py-10">
-        <header className="flex items-center gap-3">
-          <LogoMark />
-          <div>
-            <h1 className="text-xl font-bold tracking-tight md:text-2xl">웹 스캐너</h1>
-            <p className="text-xs md:text-sm" style={{ color: "var(--scan-ink-soft)" }}>
-              웹사이트 주소만 입력하면 페이지와 이미지를 내 컴퓨터에 안전하게 보관해 드려요.
-            </p>
+        <header className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <LogoMark />
+            <div>
+              <h1 className="text-xl font-bold tracking-tight md:text-2xl">웹 스캐너</h1>
+              <p className="text-xs md:text-sm" style={{ color: "var(--scan-ink-soft)" }}>
+                웹사이트 주소만 입력하면 페이지와 이미지를 내 컴퓨터에 안전하게 보관해 드려요.
+              </p>
+            </div>
           </div>
+          <Link
+            href="/v2"
+            className="shrink-0 text-xs font-medium underline"
+            style={{ color: "var(--scan-blue)" }}
+          >
+            v2 구조 클론 →
+          </Link>
         </header>
 
         <div className="mt-6">
