@@ -31,6 +31,37 @@ export interface SkippedAssetInfo {
   reason: "too-large" | "fetch-failed" | "timeout" | "blocked";
 }
 
+/** A semantic region of the cloned page (P0 structure clone). */
+export type SectionRole =
+  | "header"
+  | "nav"
+  | "hero"
+  | "section"
+  | "cta"
+  | "footer"
+  | "aside";
+
+export interface SectionNode {
+  role: SectionRole;
+  tag: string;
+  /** First heading or leading text, trimmed for a human-readable label. */
+  label: string;
+  textPreview: string;
+  imageCount: number;
+  linkCount: number;
+}
+
+export interface NavItem {
+  label: string;
+  href: string | null;
+  children: NavItem[];
+}
+
+export interface SiteStructure {
+  sections: SectionNode[];
+  nav: NavItem[];
+}
+
 export interface CloneResult {
   runId: string;
   sourceUrl: string;
@@ -44,6 +75,10 @@ export interface CloneResult {
   totalDetectedAssets: number;
   downloadedAssets: SavedAssetInfo[];
   skippedAssets: SkippedAssetInfo[];
+  /** P0: semantic section tree + menu structure. */
+  structure: SiteStructure;
+  /** Number of external stylesheets inlined into the snapshot. */
+  inlinedStylesheets: number;
   durationMs: number;
   createdAt: string;
 }

@@ -68,9 +68,59 @@ export function ResultPanel({ result }: { result: CloneResult }) {
 
       <div className="grid grid-cols-3 gap-2">
         <StatBox label="내려받은 파일" value={`${result.downloadedAssets.length}개`} />
-        <StatBox label="페이지 크기" value={formatBytes(result.htmlBytes)} />
+        <StatBox label="섹션 블록" value={`${result.structure.sections.length}개`} />
         <StatBox label="걸린 시간" value={formatDuration(result.durationMs)} />
       </div>
+
+      {result.structure.sections.length > 0 ? (
+        <div>
+          <p className="scan-eyebrow">
+            페이지 구조 · CSS {result.inlinedStylesheets}개 인라인
+          </p>
+          <ol className="mt-2 space-y-1">
+            {result.structure.sections.map((section, i) => (
+              <li
+                key={`${section.role}-${i}`}
+                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
+                style={{ background: "var(--scan-paper)", border: "1px solid var(--scan-line)" }}
+              >
+                <span
+                  className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase"
+                  style={{ background: "var(--scan-blue-soft)", color: "var(--scan-blue)" }}
+                >
+                  {section.role}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs">{section.label}</span>
+                <span className="shrink-0 font-mono text-[10px]" style={{ color: "var(--scan-ink-soft)" }}>
+                  {section.imageCount > 0 ? `🖼${section.imageCount} ` : ""}
+                  {section.linkCount > 0 ? `🔗${section.linkCount}` : ""}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+
+      {result.structure.nav.length > 0 ? (
+        <div>
+          <p className="scan-eyebrow">메뉴 구조 {result.structure.nav.length}개</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {result.structure.nav.map((item, i) => (
+              <span
+                key={`${item.label}-${i}`}
+                className="rounded-full px-2.5 py-1 text-xs"
+                style={{ border: "1px solid var(--scan-line)", background: "#fff" }}
+                title={item.children.length > 0 ? `하위 ${item.children.length}개` : undefined}
+              >
+                {item.label}
+                {item.children.length > 0 ? (
+                  <span style={{ color: "var(--scan-blue)" }}> ▾{item.children.length}</span>
+                ) : null}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <a

@@ -1,6 +1,8 @@
 import path from "node:path";
 import { uploadAssetFromResponse, uploadHtmlSnapshot } from "@/lib/clone/blob";
 import { insertCloneRun } from "@/lib/clone/db";
+import { rewriteSnapshot } from "@/lib/clone/rewrite";
+import { extractStructure } from "@/lib/clone/structure";
 import type {
   CloneResult,
   DetectedAsset,
@@ -185,10 +187,27 @@ export async function saveCloneArtifacts(
 ): Promise<CloneResult> {
   const runId = makeRunId(sourceUrl);
 
-  const snapshot = await uploadHtmlSnapshot(runId, extracted.html);
-
+  // 1. Download assets first so we can rewrite the snapshot to point at
+  //    the Blob copies (self-contained clone, not origin-dependent).
   const candidates = extracted.assets.slice(0, MAX_ASSETS);
   const { saved, skipped } = await downloadPool(candidates, runId, onProgress);
+
+  // 2. Build the original-URL -> Blob-URL map from the downloaded assets.
+  const assetMap = new Map<string, string>();
+  for (const asset of saved) assetMap.set(asset.sourceUrl, asset.localPath);
+
+  // 3. Rewrite asset refs + inline external CSS + strip scripts.
+  const { html: rewrittenHtml, inlinedStylesheets } = await rewriteSnapshot(
+    extracted.html,
+    extracted.finalUrl,
+    assetMap,
+  );
+
+  // 4. Extract the semantic section tree + menu structure (P0 core value).
+  const structure = extractStructure(rewrittenHtml);
+
+  // 5. Upload the self-contained snapshot.
+  const snapshot = await uploadHtmlSnapshot(runId, rewrittenHtml);
 
   const createdAt = new Date().toISOString();
   const result: CloneResult = {
@@ -203,6 +222,8 @@ export async function saveCloneArtifacts(
     totalDetectedAssets: extracted.assets.length,
     downloadedAssets: saved,
     skippedAssets: skipped,
+    structure,
+    inlinedStylesheets,
     durationMs: Date.now() - startedAt,
     createdAt,
   };

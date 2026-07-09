@@ -41,10 +41,15 @@ export async function ensureSchema(): Promise<void> {
       total_detected_assets INTEGER NOT NULL,
       downloaded_assets JSONB NOT NULL DEFAULT '[]',
       skipped_assets JSONB NOT NULL DEFAULT '[]',
+      structure JSONB NOT NULL DEFAULT '{"sections":[],"nav":[]}',
+      inlined_stylesheets INTEGER NOT NULL DEFAULT 0,
       duration_ms INTEGER NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // Additive migration for stores created before P0 columns existed.
+  await sql`ALTER TABLE clone_runs ADD COLUMN IF NOT EXISTS structure JSONB NOT NULL DEFAULT '{"sections":[],"nav":[]}'`;
+  await sql`ALTER TABLE clone_runs ADD COLUMN IF NOT EXISTS inlined_stylesheets INTEGER NOT NULL DEFAULT 0`;
   await sql`
     CREATE INDEX IF NOT EXISTS clone_runs_created_at_idx
     ON clone_runs (created_at DESC)
@@ -59,12 +64,13 @@ export async function insertCloneRun(result: CloneResult): Promise<void> {
     INSERT INTO clone_runs (
       run_id, source_url, final_url, title, description, html_bytes,
       snapshot_url, total_detected_assets, downloaded_assets,
-      skipped_assets, duration_ms, created_at
+      skipped_assets, structure, inlined_stylesheets, duration_ms, created_at
     ) VALUES (
       ${result.runId}, ${result.sourceUrl}, ${result.finalUrl}, ${result.title},
       ${result.description}, ${result.htmlBytes}, ${result.snapshotPath},
       ${result.totalDetectedAssets}, ${JSON.stringify(result.downloadedAssets)},
-      ${JSON.stringify(result.skippedAssets)}, ${result.durationMs}, ${result.createdAt}
+      ${JSON.stringify(result.skippedAssets)}, ${JSON.stringify(result.structure)},
+      ${result.inlinedStylesheets}, ${result.durationMs}, ${result.createdAt}
     )
     ON CONFLICT (run_id) DO NOTHING
   `;
