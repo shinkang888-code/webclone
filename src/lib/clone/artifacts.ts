@@ -38,7 +38,12 @@ export function makeRunId(url: string): string {
 /** Checked before every scan so failures are a friendly message, not a 500. */
 export function assertStorageConfigured(): void {
   const missing: string[] = [];
-  if (!process.env.BLOB_READ_WRITE_TOKEN) missing.push("Blob");
+  // Vercel Blob now authenticates via OIDC (BLOB_STORE_ID + auto-injected
+  // VERCEL_OIDC_TOKEN) when connected through the dashboard; the older
+  // static BLOB_READ_WRITE_TOKEN still works too, so accept either.
+  if (!process.env.BLOB_STORE_ID && !process.env.BLOB_READ_WRITE_TOKEN) {
+    missing.push("Blob");
+  }
   if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) {
     missing.push("Postgres(Neon)");
   }
