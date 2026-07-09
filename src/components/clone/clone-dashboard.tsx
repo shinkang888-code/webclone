@@ -200,7 +200,7 @@ export function CloneDashboard() {
         </div>
 
         <footer className="mt-8 text-center font-mono text-[11px]" style={{ color: "var(--scan-ink-soft)" }}>
-          스캔 결과 저장 위치: docs/research/runs · public/clones — 본인 소유이거나 이용이 허락된 사이트만 스캔하세요.
+          스캔 결과는 Vercel Blob·Neon Postgres에 안전하게 보관돼요 — 본인 소유이거나 이용이 허락된 사이트만 스캔하세요.
         </footer>
       </div>
     </div>

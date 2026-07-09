@@ -1,5 +1,5 @@
 import {
-  assertWritableWorkspace,
+  assertStorageConfigured,
   MAX_ASSETS,
   saveCloneArtifacts,
 } from "@/lib/clone/artifacts";
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
           throw new Error("스캔할 웹사이트 주소를 입력해 주세요.");
         }
 
-        await assertWritableWorkspace();
+        assertStorageConfigured();
 
         const targetUrl = normalizeUrl(body.url);
         await assertPublicUrl(targetUrl);

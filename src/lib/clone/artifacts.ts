@@ -1,8 +1,6 @@
-import { createWriteStream } from "node:fs";
-import { access, constants, mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { uploadAssetFromResponse, uploadHtmlSnapshot } from "@/lib/clone/blob";
+import { insertCloneRun } from "@/lib/clone/db";
 import type {
   CloneResult,
   DetectedAsset,
@@ -12,11 +10,9 @@ import type {
 } from "@/types/clone";
 
 /**
- * Memory-safe artifact pipeline:
- * - assets stream straight to disk (no arrayBuffer buffering)
- * - per-asset size cap enforced mid-stream, oversized files aborted + removed
- * - downloads run in a small parallel pool instead of serially
- * - progress is reported per asset via callback (drives the live UI)
+ * Memory-safe artifact pipeline, now backed by Vercel Blob (files)
+ * and Neon Postgres (run metadata) instead of local disk — required
+ * for persistence on Vercel's serverless, read-only filesystem.
  */
 
 export const MAX_ASSETS = 40;
@@ -39,12 +35,16 @@ export function makeRunId(url: string): string {
   return `${hostname}-${timestamp}`;
 }
 
-export async function assertWritableWorkspace(): Promise<void> {
-  try {
-    await access(process.cwd(), constants.W_OK);
-  } catch {
+/** Checked before every scan so failures are a friendly message, not a 500. */
+export function assertStorageConfigured(): void {
+  const missing: string[] = [];
+  if (!process.env.BLOB_READ_WRITE_TOKEN) missing.push("Blob");
+  if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) {
+    missing.push("Postgres(Neon)");
+  }
+  if (missing.length > 0) {
     throw new Error(
-      "이 서버 환경은 파일 저장이 제한되어 있어요(예: Vercel 서버리스). 로컬에서 `npm run dev`로 실행해 주세요.",
+      `저장소가 아직 연결되지 않았어요 (${missing.join(", ")} 미연결). Vercel 프로젝트의 Storage 탭에서 추가해 주세요.`,
     );
   }
 }
@@ -67,49 +67,13 @@ function extFromContentType(contentType: string | null): string {
   return ".bin";
 }
 
-/** Wrap a web stream and abort once the byte budget is exceeded. */
-function limitBytes(
-  source: ReadableStream<Uint8Array>,
-  maxBytes: number,
-): { stream: Readable; overflowed: () => boolean } {
-  let total = 0;
-  let overflow = false;
-  const reader = source.getReader();
-
-  const nodeStream = new Readable({
-    async read() {
-      try {
-        const { done, value } = await reader.read();
-        if (done) {
-          this.push(null);
-          return;
-        }
-        total += value.byteLength;
-        if (total > maxBytes) {
-          overflow = true;
-          await reader.cancel();
-          this.destroy(new Error("asset-too-large"));
-          return;
-        }
-        this.push(Buffer.from(value));
-      } catch (error) {
-        this.destroy(error instanceof Error ? error : new Error("read-failed"));
-      }
-    },
-  });
-
-  return { stream: nodeStream, overflowed: () => overflow };
-}
-
 async function downloadAsset(
   asset: DetectedAsset,
-  targetDir: string,
   runId: string,
   index: number,
 ): Promise<SavedAssetInfo | SkippedAssetInfo> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ASSET_TIMEOUT_MS);
-  let fullPath: string | null = null;
 
   try {
     const response = await fetch(asset.url, {
@@ -134,22 +98,21 @@ async function downloadAsset(
       path.extname(urlObj.pathname).slice(0, 8) ||
       extFromContentType(response.headers.get("content-type"));
     const fileName = `${String(index + 1).padStart(2, "0")}-${baseName}${ext}`;
-    fullPath = path.join(targetDir, fileName);
 
-    const { stream } = limitBytes(response.body, MAX_ASSET_BYTES);
-    await pipeline(stream, createWriteStream(fullPath));
+    const uploaded = await uploadAssetFromResponse(
+      runId,
+      fileName,
+      response,
+      MAX_ASSET_BYTES,
+    );
 
-    const { size } = await stat(fullPath);
     return {
       sourceUrl: asset.url,
-      localPath: `/clones/${runId}/assets/${fileName}`,
+      localPath: uploaded.url,
       kind: asset.kind,
-      bytes: size,
+      bytes: uploaded.bytes,
     };
   } catch (error) {
-    if (fullPath) {
-      await unlink(fullPath).catch(() => undefined);
-    }
     const message = error instanceof Error ? error.message : "";
     if (message === "asset-too-large") {
       return { sourceUrl: asset.url, reason: "too-large" };
@@ -165,7 +128,6 @@ async function downloadAsset(
 
 async function downloadPool(
   assets: DetectedAsset[],
-  targetDir: string,
   runId: string,
   onProgress: AssetProgress,
 ): Promise<{ saved: SavedAssetInfo[]; skipped: SkippedAssetInfo[] }> {
@@ -178,7 +140,7 @@ async function downloadPool(
     while (cursor < assets.length) {
       const index = cursor;
       cursor += 1;
-      const result = await downloadAsset(assets[index], targetDir, runId, index);
+      const result = await downloadAsset(assets[index], runId, index);
       completed += 1;
       if ("localPath" in result) {
         saved.push(result);
@@ -206,7 +168,6 @@ async function downloadPool(
     Array.from({ length: Math.min(CONCURRENCY, assets.length) }, worker),
   );
 
-  // Keep original detection order for the result list.
   saved.sort((a, b) => a.localPath.localeCompare(b.localPath));
   return { saved, skipped };
 }
@@ -218,27 +179,11 @@ export async function saveCloneArtifacts(
   startedAt: number,
 ): Promise<CloneResult> {
   const runId = makeRunId(sourceUrl);
-  const root = process.cwd();
 
-  const docsRunDir = path.join(root, "docs", "research", "runs", runId);
-  const publicRunDir = path.join(root, "public", "clones", runId);
-  const publicAssetDir = path.join(publicRunDir, "assets");
-
-  await mkdir(docsRunDir, { recursive: true });
-  await mkdir(publicAssetDir, { recursive: true });
-
-  const htmlBuffer = Buffer.from(extracted.html, "utf-8");
-  // Snapshot is saved both to docs/ (research archive) and public/ (browser preview).
-  await writeFile(path.join(docsRunDir, "source.html"), htmlBuffer);
-  await writeFile(path.join(publicRunDir, "source.html"), htmlBuffer);
+  const snapshot = await uploadHtmlSnapshot(runId, extracted.html);
 
   const candidates = extracted.assets.slice(0, MAX_ASSETS);
-  const { saved, skipped } = await downloadPool(
-    candidates,
-    publicAssetDir,
-    runId,
-    onProgress,
-  );
+  const { saved, skipped } = await downloadPool(candidates, runId, onProgress);
 
   const createdAt = new Date().toISOString();
   const result: CloneResult = {
@@ -248,8 +193,8 @@ export async function saveCloneArtifacts(
     title: extracted.title,
     description: extracted.description,
     ogImage: extracted.ogImage,
-    htmlBytes: htmlBuffer.byteLength,
-    snapshotPath: `/clones/${runId}/source.html`,
+    htmlBytes: snapshot.bytes,
+    snapshotPath: snapshot.url,
     totalDetectedAssets: extracted.assets.length,
     downloadedAssets: saved,
     skippedAssets: skipped,
@@ -257,16 +202,7 @@ export async function saveCloneArtifacts(
     createdAt,
   };
 
-  await writeFile(
-    path.join(docsRunDir, "metadata.json"),
-    JSON.stringify(result, null, 2),
-    "utf-8",
-  );
-  await writeFile(
-    path.join(publicRunDir, "metadata.json"),
-    JSON.stringify(result, null, 2),
-    "utf-8",
-  );
+  await insertCloneRun(result);
 
   return result;
 }
